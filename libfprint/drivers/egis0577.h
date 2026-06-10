@@ -146,3 +146,12 @@ static const Packet EGIS0577_REPEAT_PACKETS[] = {
 #define EGIS0577_TIMEOUT 10000
 
 #define EGIS0577_CONSECUTIVE_CAPTURES 8
+
+/*
+ * Minimum number of strips that must be collected before submitting an image
+ * for matching. A real finger press delivers up to CONSECUTIVE_CAPTURES strips;
+ * requiring at least this many prevents a single spurious high-variance frame
+ * (followed by one sub-threshold frame) from triggering a match attempt.
+ * Set to roughly CONSECUTIVE_CAPTURES/2 so brief but real touches still work.
+ */
+#define EGIS0577_MIN_STRIPS_FOR_MATCH 3

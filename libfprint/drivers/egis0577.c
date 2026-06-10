@@ -298,13 +298,24 @@ save_img (FpiUsbTransfer *transfer, FpDevice *dev)
 
   if (!detected_finger)
     {
-      if (self->strips_len > 0)
+      if (self->strips_len >= EGIS0577_MIN_STRIPS_FOR_MATCH)
         {
           fp_dbg ("Finger no longer detected after %zu strips, processing image", self->strips_len);
           goto START_PROCESSING;
         }
-
-      report_finger_status (self, img_self, FALSE, "non-zero frame below finger heuristic threshold");
+      else if (self->strips_len > 0)
+        {
+          fp_dbg ("Only %zu strip(s) collected (need %d), discarding spurious capture",
+                  self->strips_len, EGIS0577_MIN_STRIPS_FOR_MATCH);
+          g_slist_free_full (self->strips, g_free);
+          self->strips = NULL;
+          self->strips_len = 0;
+          report_finger_status (self, img_self, FALSE, "too few strips — spurious frame discarded");
+        }
+      else
+        {
+          report_finger_status (self, img_self, FALSE, "non-zero frame below finger heuristic threshold");
+        }
     }
   else
     {
