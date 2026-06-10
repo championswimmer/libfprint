@@ -130,6 +130,7 @@ default_drivers = [
     'vfs0050',
     'etes603',
     'egis0570',
+    'egis0577',
     'egismoc',
     'vcom5s',
     'synaptics',
@@ -164,6 +165,7 @@ endian_independent_drivers = virtual_drivers + [
     'aes3500',
     'aes4000',
     'egis0570',
+    'egis0577',
     'egismoc',
     'elanmoc',
     'etes603',
@@ -209,6 +211,7 @@ driver_helper_mapping = {
     'aes2660' : [ 'aeslib', 'aesx660' ],
     'aes3500' : [ 'aeslib', 'aes3k' ],
     'aes4000' : [ 'aeslib', 'aes3k' ],
+    'egis0577' : [ 'pixman' ],
     'uru4000' : [ 'openssl' ],
     'elanspi' : [ 'udev' ],
     'virtual_image'          : [ 'virtual' ],
@@ -259,6 +262,14 @@ foreach i : driver_helpers
     endforeach
 
     if i == 'aes3k'
+        imaging_dep = dependency('pixman-1', required: false)
+        if not imaging_dep.found()
+            error('pixman is required for @0@ and possibly others'.format(driver))
+        endif
+
+        libfprint_conf.set10('HAVE_PIXMAN', true)
+        optional_deps += imaging_dep
+    elif i == 'pixman'
         imaging_dep = dependency('pixman-1', required: false)
         if not imaging_dep.found()
             error('pixman is required for @0@ and possibly others'.format(driver))

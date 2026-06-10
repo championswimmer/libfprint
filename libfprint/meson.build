@@ -125,6 +125,8 @@ driver_sources = {
         [ 'drivers/etes603.c' ],
     'egis0570' :
         [ 'drivers/egis0570.c' ],
+    'egis0577' :
+        [ 'drivers/egis0577.c' ],
     'egismoc' :
         [ 'drivers/egismoc/egismoc.c' ],
     'vfs0050' :
@@ -163,6 +165,8 @@ helper_sources = {
     'aes3k' :
         [ 'drivers/aes3k.c' ],
     'openssl' :
+        [ ],
+    'pixman' :
         [ ],
     'udev' :
         [ ],
