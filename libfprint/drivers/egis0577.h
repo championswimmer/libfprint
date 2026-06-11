@@ -146,13 +146,15 @@ static const Packet EGIS0577_REPEAT_PACKETS[] = {
  *
  * Measured on real hardware (2026-06-11):
  *   Idle (no finger, cold):         ~111 nonzero pixels at value ~190 (hot pixels).
- *   Post-capture AGC shift (no finger): 519–755 nonzero (sensor AGC warms up).
+ *   Post-capture AGC shift (no finger): 519–755 nonzero (sensor AGC warms up; may
+ *                                       persist even after SM_INIT reset in some runs).
  *   Real finger:                    1305–1594 nonzero pixels at value 1–105.
  *
- * 700 sits safely between the worst-case post-capture baseline (~755) and real
- * finger counts (≥ 1305).  Using 400 allowed the AGC-warmed idle frames to pass.
+ * 1000 sits between the worst-case no-finger baseline (~755) and the minimum
+ * observed real-finger count (1305), with ~250 pixels of margin on each side.
+ * 700 was still allowing spurious stage completions without a finger present.
  */
-#define EGIS0577_MIN_ACTIVE_PIXELS 700
+#define EGIS0577_MIN_ACTIVE_PIXELS 1000
 #define EGIS0577_TIMEOUT 10000
 
 /*
