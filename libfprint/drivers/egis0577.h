@@ -145,14 +145,25 @@ static const Packet EGIS0577_REPEAT_PACKETS[] = {
  * Minimum number of nonzero pixels required to classify a frame as finger-present.
  *
  * Measured on real hardware (2026-06-11):
- *   Phantom (no finger): ~111 nonzero pixels at value ~190 — fixed hot pixels.
- *   Real finger:        1305-1594 nonzero pixels at value 1-105.
+ *   Idle (no finger, cold):         ~111 nonzero pixels at value ~190 (hot pixels).
+ *   Post-capture AGC shift (no finger): 519–755 nonzero (sensor AGC warms up).
+ *   Real finger:                    1305–1594 nonzero pixels at value 1–105.
  *
- * 400 sits safely between 111 and 1305 (10× margin on both sides).
- * The old variance check was backward: phantom variance ~910 >> real finger ~290-590.
+ * 700 sits safely between the worst-case post-capture baseline (~755) and real
+ * finger counts (≥ 1305).  Using 400 allowed the AGC-warmed idle frames to pass.
  */
-#define EGIS0577_MIN_ACTIVE_PIXELS 400
+#define EGIS0577_MIN_ACTIVE_PIXELS 700
 #define EGIS0577_TIMEOUT 10000
+
+/*
+ * Milliseconds to pause after submitting an enrollment image before allowing
+ * the next stage to begin.  During this gap the driver jumps to SM_INIT to
+ * run the full PRE_INIT → POST_INIT reset sequence, putting the sensor back in
+ * a known-cold state (AGC reset, baseline returns to ~111 nonzero).
+ * 1.5 s is enough for the user to lift their finger; the actual touch detection
+ * is then done purely on pixel count (≥ EGIS0577_MIN_ACTIVE_PIXELS).
+ */
+#define EGIS0577_INTER_STAGE_DELAY_MS 1500
 
 #define EGIS0577_CONSECUTIVE_CAPTURES 8
 
