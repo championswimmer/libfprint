@@ -422,9 +422,9 @@ resp_cb (FpiUsbTransfer *transfer, FpDevice *dev, gpointer user_data, GError *er
     {
       if (self->pkt_array == EGIS0577_POST_INIT_PACKETS)
         {
-          fp_dbg ("Completed post-init sequence, saving frame and staying on post-init polling");
-          self->pkt_array = EGIS0577_POST_INIT_PACKETS;
-          self->pkt_array_len = EGIS0577_POST_INIT_PACKETS_LENGTH;
+          fp_dbg ("Completed post-init sequence, switching to repeat-path polling");
+          self->pkt_array = EGIS0577_REPEAT_PACKETS;
+          self->pkt_array_len = EGIS0577_REPEAT_PACKETS_LENGTH;
           self->current_index = 0;
 
           save_img (transfer, dev);
@@ -432,9 +432,9 @@ resp_cb (FpiUsbTransfer *transfer, FpDevice *dev, gpointer user_data, GError *er
         }
       else if (self->pkt_array == EGIS0577_REPEAT_PACKETS)
         {
-          fp_dbg ("Completed repeat sequence, saving frame and returning to post-init polling");
-          self->pkt_array = EGIS0577_POST_INIT_PACKETS;
-          self->pkt_array_len = EGIS0577_POST_INIT_PACKETS_LENGTH;
+          fp_dbg ("Completed repeat sequence, continuing repeat-path polling");
+          self->pkt_array = EGIS0577_REPEAT_PACKETS;
+          self->pkt_array_len = EGIS0577_REPEAT_PACKETS_LENGTH;
           self->current_index = 0;
 
           save_img (transfer, dev);
@@ -710,6 +710,7 @@ fpi_device_egis0577_class_init (FpDeviceEgis0577Class *klass)
   dev_class->type = FP_DEVICE_TYPE_USB;
   dev_class->id_table = id_table;
   dev_class->scan_type = FP_SCAN_TYPE_SWIPE;
+  dev_class->nr_enroll_stages = 10;
 
   img_class->img_open = dev_init;
   img_class->img_close = dev_deinit;
