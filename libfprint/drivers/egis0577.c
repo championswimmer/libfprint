@@ -54,6 +54,12 @@ struct _FpDeviceEgis0577
   guint         pre_frame_delay_ms;
   guint         poll_loop_delay_ms;
   gboolean      frame_delay_armed;
+
+  /* TRUE after an image has been submitted but before the physical finger has
+   * been removed.  While set, save_img() polls without collecting strips and
+   * only reports FALSE (triggering the next enroll stage) once the sensor
+   * returns a no-finger frame.  This forces separate presses between stages. */
+  gboolean      waiting_finger_off;
 };
 
 enum sm_states {
@@ -235,15 +241,42 @@ save_img (FpiUsbTransfer *transfer, FpDevice *dev)
   gboolean has_valid_data = valid_data (transfer);
   gboolean detected_finger = FALSE;
 
-  fp_dbg ("Frame received from %s[%d]: len=%zu nonzero=%zu strips=%zu stop=%d",
+  fp_dbg ("Frame received from %s[%d]: len=%zu nonzero=%zu strips=%zu stop=%d waiting_off=%d",
           packet_array_name (self->pkt_array),
           self->current_index,
           transfer->actual_length,
           nonzero,
           self->strips_len,
-          self->stop);
+          self->stop,
+          self->waiting_finger_off);
 
   dump_frame_if_requested (self, transfer, nonzero);
+
+  /*
+   * After submitting an image we wait for the physical finger to actually
+   * leave the sensor before allowing the next enroll stage to begin.  This
+   * ensures each stage is a distinct press at (ideally) a slightly different
+   * position, improving template quality.
+   */
+  if (self->waiting_finger_off)
+    {
+      gboolean finger_gone = !has_valid_data || !finger_present (transfer);
+
+      fp_dbg ("Waiting for finger removal: finger_gone=%d", finger_gone);
+
+      if (self->stop || finger_gone)
+        {
+          self->waiting_finger_off = FALSE;
+          report_finger_status (self, img_self, FALSE, "finger removed after image capture");
+          fpi_ssm_jump_to_state (transfer->ssm, SM_DONE);
+        }
+      else
+        {
+          report_finger_status (self, img_self, TRUE, "still waiting for finger removal");
+          jump_to_req_with_optional_delay (self, transfer->ssm, "finger still present after capture");
+        }
+      return;
+    }
 
   /*
    * EH577 idle captures are often all-zero, including the first 5356-byte
@@ -367,8 +400,12 @@ process_imgs (FpiSsm *ssm, FpDevice *dev)
       self->strips = NULL;
       self->strips_len = 0;
 
-      report_finger_status (self, img_self, FALSE, "image submitted");
-      fpi_ssm_next_state (ssm);
+      /* Don't report finger-off yet.  Keep polling until the sensor confirms
+       * the physical finger is gone so that the next enroll stage requires a
+       * separate, distinct press. */
+      self->waiting_finger_off = TRUE;
+      fp_dbg ("Image submitted; waiting for physical finger removal before next stage");
+      jump_to_req_with_optional_delay (self, ssm, "waiting for finger removal");
     }
   else
     {
@@ -534,6 +571,7 @@ ssm_run_state (FpiSsm *ssm, FpDevice *dev)
 
       self->strips_len = 0;
       self->strips = NULL;
+      self->waiting_finger_off = FALSE;
       fp_dbg ("Initial packet array: %s", packet_array_name (self->pkt_array));
       fp_dbg ("EH577 pacing config: pre_frame_delay_ms=%u poll_loop_delay_ms=%u",
               self->pre_frame_delay_ms,
