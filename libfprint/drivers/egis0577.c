@@ -204,20 +204,10 @@ valid_data (FpiUsbTransfer *transfer)
 static gboolean
 finger_present (FpiUsbTransfer *transfer)
 {
-  unsigned char *buffer = transfer->buffer;
-  int length = transfer->actual_length;
-  double mean = 0;
-  double variance = 0;
+  gsize nonzero = count_nonzero_bytes (transfer);
 
-  for (size_t i = 0; i < length; i++)
-    mean += buffer[i];
-  mean /= length;
-
-  for (size_t i = 0; i < length; i++)
-    variance += (buffer[i] - mean) * (buffer[i] - mean);
-  variance /= length;
-
-  return variance > EGIS0577_MIN_SD * EGIS0577_MIN_SD;
+  fp_dbg ("finger_present: nonzero=%zu threshold=%d", nonzero, EGIS0577_MIN_ACTIVE_PIXELS);
+  return nonzero >= EGIS0577_MIN_ACTIVE_PIXELS;
 }
 
 static void
@@ -326,7 +316,7 @@ save_img (FpiUsbTransfer *transfer, FpDevice *dev)
       self->strips = g_slist_prepend (self->strips, stripe);
       self->strips_len += 1;
 
-      report_finger_status (self, img_self, TRUE, "frame variance exceeded threshold");
+      report_finger_status (self, img_self, TRUE, "active pixel count exceeded threshold");
       fp_dbg ("Appended strip %zu/%d", self->strips_len, EGIS0577_CONSECUTIVE_CAPTURES);
     }
 

@@ -141,8 +141,17 @@ static const Packet EGIS0577_REPEAT_PACKETS[] = {
 #define EGIS0577_RFMDIS (EGIS0577_IMGHEIGHT - EGIS0577_RFMGHEIGHT) / 2
 #define EGIS0577_RESIZE 2
 
-/* Minimum standard deviation required to validate finger is present, usual value roam around 20-50 */
-#define EGIS0577_MIN_SD 18
+/*
+ * Minimum number of nonzero pixels required to classify a frame as finger-present.
+ *
+ * Measured on real hardware (2026-06-11):
+ *   Phantom (no finger): ~111 nonzero pixels at value ~190 — fixed hot pixels.
+ *   Real finger:        1305-1594 nonzero pixels at value 1-105.
+ *
+ * 400 sits safely between 111 and 1305 (10× margin on both sides).
+ * The old variance check was backward: phantom variance ~910 >> real finger ~290-590.
+ */
+#define EGIS0577_MIN_ACTIVE_PIXELS 400
 #define EGIS0577_TIMEOUT 10000
 
 #define EGIS0577_CONSECUTIVE_CAPTURES 8
