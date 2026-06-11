@@ -268,7 +268,10 @@ save_img (FpiUsbTransfer *transfer, FpDevice *dev)
         {
           self->waiting_finger_off = FALSE;
           report_finger_status (self, img_self, FALSE, "finger removed after image capture");
-          fpi_ssm_jump_to_state (transfer->ssm, SM_DONE);
+          /* Jump to SM_INIT so the next stage runs a full PRE_INIT → POST_INIT
+           * reset sequence, putting the sensor back to a clean known state
+           * before waiting for the user's next press. */
+          fpi_ssm_jump_to_state (transfer->ssm, SM_INIT);
         }
       else
         {
