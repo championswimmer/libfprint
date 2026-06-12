@@ -234,13 +234,20 @@ fpi_print_bz3_match (FpPrint *template, FpPrint *print, gint bz3_threshold, GErr
   pstruct = g_ptr_array_index (print->prints, 0);
   probe_len = bozorth_probe_init (pstruct);
 
+  /* Diagnostic: match the probe against itself. If a probe with N minutiae does
+   * not self-match far above threshold, the extraction/coordinate/format pipeline
+   * is broken (not just "too few minutiae"). */
+  g_warning ("self-match: probe=%d self_score=%d",
+             pstruct->nrows, bozorth_to_gallery (probe_len, pstruct, pstruct));
+
   for (i = 0; i < template->prints->len; i++)
     {
       struct xyt_struct *gstruct;
       gint score;
       gstruct = g_ptr_array_index (template->prints, i);
       score = bozorth_to_gallery (probe_len, pstruct, gstruct);
-      fp_dbg ("score %d/%d", score, bz3_threshold);
+      g_warning ("minutiae: probe=%d template=%d  score %d/%d",
+                 pstruct->nrows, gstruct->nrows, score, bz3_threshold);
 
       if (score >= bz3_threshold)
         return FPI_MATCH_SUCCESS;
