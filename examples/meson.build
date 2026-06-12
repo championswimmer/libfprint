@@ -1,6 +1,8 @@
 
 examples = [
     'enroll',
+    'eh577-enroll-helper',
+    'eh577-identify-helper',
     'identify',
     'img-capture',
     'manage-prints',
