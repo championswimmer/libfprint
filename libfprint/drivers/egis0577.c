@@ -202,14 +202,35 @@ valid_data (FpiUsbTransfer *transfer)
 }
 
 static gboolean
-finger_present (FpiUsbTransfer *transfer)
+finger_present (FpDeviceEgis0577 *self, FpiUsbTransfer *transfer)
 {
   gsize nonzero = count_nonzero_bytes (transfer);
+  int threshold = self->strips_len > 0 ? EGIS0577_MIN_ACTIVE_PIXELS_LOOSE : EGIS0577_MIN_ACTIVE_PIXELS_STRICT;
 
-  fp_dbg ("finger_present: nonzero=%zu threshold=%d", nonzero, EGIS0577_MIN_ACTIVE_PIXELS);
-  return nonzero >= EGIS0577_MIN_ACTIVE_PIXELS;
+  fp_dbg ("finger_present: nonzero=%zu threshold=%d", nonzero, threshold);
+  return nonzero >= threshold;
 }
 
+/* Used inside resp_cb to advance to the next packet in the current sequence. */
+static void
+jump_to_req_with_optional_delay (FpDeviceEgis0577 *self,
+                                  FpiSsm           *ssm,
+                                  const char       *reason)
+{
+  if (self->poll_loop_delay_ms > 0)
+    {
+      fp_dbg ("Delaying next packet by %u ms (%s)", self->poll_loop_delay_ms, reason);
+      fpi_ssm_jump_to_state_delayed (ssm, SM_REQ, self->poll_loop_delay_ms);
+    }
+  else
+    {
+      fpi_ssm_jump_to_state (ssm, SM_REQ);
+    }
+}
+
+/* Used in save_img / process_imgs to restart with a full PRE_INIT → POST_INIT
+ * reset cycle.  Re-running POST_INIT immediately without a reset times out at
+ * packet 5; a full SM_INIT gives the device the reset it needs. */
 static void
 jump_to_init_with_optional_delay (FpDeviceEgis0577 *self,
                                    FpiSsm           *ssm,
@@ -224,6 +245,30 @@ jump_to_init_with_optional_delay (FpDeviceEgis0577 *self,
     {
       fpi_ssm_jump_to_state (ssm, SM_INIT);
     }
+}
+
+/* Restart the POST_INIT sequence (without running PRE_INIT) after a frame.
+ * Used for within-stage polling: no-finger waits and consecutive strip
+ * collection.  A short delay prevents device command saturation — running
+ * POST_INIT back-to-back with no pause causes a timeout at packet 5. */
+static void
+restart_post_init (FpDeviceEgis0577 *self, FpiSsm *ssm, const char *reason)
+{
+  guint delay = self->poll_loop_delay_ms > 0
+                  ? self->poll_loop_delay_ms
+                  : EGIS0577_INTER_FRAME_DELAY_MS;
+
+  /* Run the REPEAT sequence as a pipeline flush/ack before restarting POST_INIT.
+   * Without it, the device's DMA/FIFO saturates after ~8 real captures and
+   * stops responding at post-init[15] (the DMA setup command).  resp_cb handles
+   * the REPEAT completion by switching back to POST_INIT automatically. */
+  self->pkt_array = EGIS0577_REPEAT_PACKETS;
+  self->pkt_array_len = EGIS0577_REPEAT_PACKETS_LENGTH;
+  self->current_index = 0;
+  self->frame_delay_armed = FALSE;
+
+  fp_dbg ("Running repeat flush in %u ms before next post-init (%s)", delay, reason);
+  fpi_ssm_jump_to_state_delayed (ssm, SM_REQ, delay);
 }
 
 static void
@@ -269,7 +314,7 @@ save_img (FpiUsbTransfer *transfer, FpDevice *dev)
         goto START_PROCESSING;
 
       report_finger_status (self, img_self, FALSE, "all-zero frame");
-      jump_to_init_with_optional_delay (self, transfer->ssm, "all-zero frame");
+      restart_post_init (self, transfer->ssm, "all-zero frame");
       return;
     }
 
@@ -283,7 +328,7 @@ save_img (FpiUsbTransfer *transfer, FpDevice *dev)
       return;
     }
 
-  detected_finger = finger_present (transfer);
+  detected_finger = finger_present (self, transfer);
   fp_dbg ("Finger heuristic for current frame: %s", detected_finger ? "present" : "absent");
 
   if (!detected_finger)
@@ -323,7 +368,7 @@ save_img (FpiUsbTransfer *transfer, FpDevice *dev)
   if (self->strips_len < EGIS0577_CONSECUTIVE_CAPTURES)
     {
       fp_dbg ("Continuing polling loop with %zu strips buffered", self->strips_len);
-      jump_to_init_with_optional_delay (self, transfer->ssm, "collecting more strips");
+      restart_post_init (self, transfer->ssm, "collecting more strips");
     }
   else
 START_PROCESSING:
@@ -367,14 +412,12 @@ process_imgs (FpiSsm *ssm, FpDevice *dev)
       self->strips = NULL;
       self->strips_len = 0;
 
-      /* Report finger-off and wait EGIS0577_INTER_STAGE_DELAY_MS before the
-       * next stage.  The delay gives the user time to lift their finger and
-       * resets the sensor via SM_INIT (PRE_INIT → POST_INIT), which clears the
-       * AGC shift that makes idle frames look like partial touches. */
+      /* Report finger-off, then flush via REPEAT and restart POST_INIT.
+       * restart_post_init runs REPEAT[0..8] as a pipeline flush before POST_INIT,
+       * preventing DMA/FIFO saturation after many consecutive real captures. */
       report_finger_status (self, img_self, FALSE, "image submitted — inter-stage gap");
-      fp_dbg ("Image submitted; pausing %d ms then resetting for next stage",
-              EGIS0577_INTER_STAGE_DELAY_MS);
-      fpi_ssm_jump_to_state_delayed (ssm, SM_INIT, EGIS0577_INTER_STAGE_DELAY_MS);
+      fp_dbg ("Image submitted; running repeat flush then post-init for next stage");
+      restart_post_init (self, ssm, "inter-stage reset");
     }
   else
     {
@@ -422,12 +465,23 @@ resp_cb (FpiUsbTransfer *transfer, FpDevice *dev, gpointer user_data, GError *er
       if (self->pkt_array == EGIS0577_POST_INIT_PACKETS)
         {
           /* Post-init complete: frame (5356 bytes) is in transfer->buffer.
-           * save_img decides whether to jump to SM_INIT for another cycle
-           * (zero/sub-threshold frame, or collecting more strips) or to
-           * SM_PROCESS_IMG when enough strips are assembled. */
+           * save_img decides whether to restart via REPEAT flush or to move
+           * to SM_PROCESS_IMG when enough strips are assembled. */
           fp_dbg ("Completed post-init sequence, passing frame to save_img");
           self->current_index = 0;
           save_img (transfer, dev);
+          return;
+        }
+      else if (self->pkt_array == EGIS0577_REPEAT_PACKETS)
+        {
+          /* REPEAT used as pipeline flush after a real capture.  The 5356-byte
+           * response here is all zeros; discard it and restart POST_INIT.
+           * Collected strips in self->strips are preserved. */
+          fp_dbg ("Completed repeat flush, restarting post-init");
+          self->pkt_array = EGIS0577_POST_INIT_PACKETS;
+          self->pkt_array_len = EGIS0577_POST_INIT_PACKETS_LENGTH;
+          self->current_index = 0;
+          jump_to_req_with_optional_delay (self, transfer->ssm, "post-repeat restart");
           return;
         }
       else
@@ -461,7 +515,7 @@ resp_cb (FpiUsbTransfer *transfer, FpDevice *dev, gpointer user_data, GError *er
       self->current_index += 1;
     }
 
-  jump_to_init_with_optional_delay (self, transfer->ssm, "advance packet sequence");
+  jump_to_req_with_optional_delay (self, transfer->ssm, "advance packet sequence");
 }
 
 static void
@@ -704,6 +758,7 @@ fpi_device_egis0577_class_init (FpDeviceEgis0577Class *klass)
   dev_class->id_table = id_table;
   dev_class->scan_type = FP_SCAN_TYPE_SWIPE;
   dev_class->nr_enroll_stages = 10;
+  dev_class->temp_hot_seconds = -1;
 
   img_class->img_open = dev_init;
   img_class->img_close = dev_deinit;
