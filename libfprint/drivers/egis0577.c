@@ -651,22 +651,6 @@ action_is_verify_or_identify (FpDevice *dev)
 }
 
 static guint
-noise_recovery_streak_threshold (FpDevice *dev)
-{
-  return action_is_verify_or_identify (dev) ?
-         EGIS0577_NOISE_RECOVERY_STREAK_VERIFY_IDENTIFY :
-         EGIS0577_NOISE_RECOVERY_STREAK_ENROLL_CAPTURE;
-}
-
-static guint
-noise_recovery_max_attempts (FpDevice *dev)
-{
-  return action_is_verify_or_identify (dev) ?
-         EGIS0577_NOISE_RECOVERY_MAX_VERIFY_IDENTIFY :
-         EGIS0577_NOISE_RECOVERY_MAX_ENROLL_CAPTURE;
-}
-
-static guint
 noise_recovery_delay_ms (FpDevice *dev)
 {
   return action_is_verify_or_identify (dev) ?
@@ -1233,9 +1217,8 @@ process_imgs (FpiSsm *ssm, FpDevice *dev)
               if (noise_like)
                 self->noise_reject_streak++;
 
-              if (noise_like &&
-                  self->noise_reject_streak >= noise_recovery_streak_threshold (dev) &&
-                  self->noise_recovery_attempts < noise_recovery_max_attempts (dev))
+              /* ALWAYS reset sensor data on reject, regardless of noise streak */
+              if (TRUE)
                 {
                   recovery_triggered = TRUE;
                   restart_delay = noise_recovery_delay_ms (dev);
@@ -1250,17 +1233,8 @@ process_imgs (FpiSsm *ssm, FpDevice *dev)
                   self->has_pre_init_run = FALSE;
                   clear_background (self);
                   clear_best_frame (self);
-                  fp_warn ("Stage-2 noisy reject streak triggered fresh baseline recovery (attempt %u/%u, delay=%ums)",
-                           self->noise_recovery_attempts,
-                           noise_recovery_max_attempts (dev),
+                  fp_warn ("Stage-2 reject triggered fresh baseline recovery unconditionally (delay=%ums)",
                            restart_delay);
-                }
-              else if (noise_like &&
-                       self->noise_recovery_attempts >= noise_recovery_max_attempts (dev))
-                {
-                  fp_warn ("Stage-2 noisy reject streak seen but recovery is capped for current action (%u/%u)",
-                           self->noise_recovery_attempts,
-                           noise_recovery_max_attempts (dev));
                 }
 
               if (stretch_p5 < self->stage2_min_stretch_p5)
