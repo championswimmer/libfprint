@@ -418,6 +418,12 @@ enhance_snapshot_image_stretch5 (FpImage *img,
       return;
     }
 
+  if (g_strcmp0 (g_getenv ("EGIS0577_DISABLE_STRETCH"), "1") == 0)
+    {
+      fp_dbg ("Skipping stretch5 enhancement because EGIS0577_DISABLE_STRETCH=1");
+      return;
+    }
+
   in_range = hi - lo;
   for (gsize i = 0; i < (gsize) total; i++)
     {
@@ -894,10 +900,10 @@ save_img (FpiUsbTransfer *transfer, FpDevice *dev)
           self->frame_reads_this_claim,
           self->max_frames_per_claim);
 
-  /* Hard 1s cap: once a touch's window has elapsed, finalize the turn on the very
-   * next frame (finger present or not) so a turn never blocks for more than ~1s. */
+  /* Hard 1.2s cap: once a touch's window has elapsed, finalize the turn on the very
+   * next frame (finger present or not) so a turn never blocks for more than ~1.2s. */
   if (self->turn_open && !self->stop &&
-      g_get_monotonic_time () - self->finger_first_detected_time > 1000 * 1000)
+      g_get_monotonic_time () - self->finger_first_detected_time > 1200 * 1000)
     {
       finalize_turn (self, transfer->ssm, dev);
       return;
@@ -920,9 +926,9 @@ save_img (FpiUsbTransfer *transfer, FpDevice *dev)
           return;
         }
 
-      if (self->finger_reported && g_get_monotonic_time () - self->finger_first_detected_time < 200 * 1000)
+      if (self->finger_reported && g_get_monotonic_time () - self->finger_first_detected_time < 300 * 1000)
         {
-          fp_dbg ("Ignoring zero frame during 200ms settle time");
+          fp_dbg ("Ignoring zero frame during 300ms settle time");
           restart_for_next_poll (self, transfer->ssm, dev, "zero frame during settle");
           return;
         }
@@ -961,9 +967,9 @@ save_img (FpiUsbTransfer *transfer, FpDevice *dev)
 
   if (!detected_finger)
     {
-      if (self->finger_reported && g_get_monotonic_time () - self->finger_first_detected_time < 200 * 1000)
+      if (self->finger_reported && g_get_monotonic_time () - self->finger_first_detected_time < 300 * 1000)
         {
-          fp_dbg ("Ignoring no-finger frame during 200ms settle time");
+          fp_dbg ("Ignoring no-finger frame during 300ms settle time");
           restart_for_next_poll (self, transfer->ssm, dev, "no-finger frame during settle");
           return;
         }
@@ -1053,20 +1059,63 @@ save_img (FpiUsbTransfer *transfer, FpDevice *dev)
   {
     gint64 elapsed = g_get_monotonic_time () - self->finger_first_detected_time;
 
-    /* Skip the first 100ms while the finger settles. */
-    if (elapsed < 100 * 1000)
+    /* Skip the first 300ms while the finger settles. */
+    if (elapsed < 300 * 1000)
       {
         fp_dbg ("Finger settling (%lld ms), skipping frame", (long long) (elapsed / 1000));
         restart_for_next_poll (self, transfer->ssm, dev, "finger settling");
         return;
       }
 
-    /* In the 100..1000ms window, keep the cleanest usable frame (lowest saturation).
-     * The 1s cap at the top of save_img finalizes the turn and submits this best
-     * frame; we never accept the first frame greedily anymore. */
+    /* In the 300..1200ms window, keep the cleanest usable frame (lowest saturation).
+     * The 1.2s cap at the top of save_img finalizes the turn and submits this best
+     * frame; we never accept the first frame greedily anymore unless it passes stage 2. */
     if (capture_usable (self, transfer))
       {
         int sat = (int) count_saturated_pixels (transfer);
+        gboolean quality_ok = FALSE;
+
+        {
+          g_autoptr(FpImage) img = fp_image_new (EGIS0577_PADDED_IMGWIDTH, EGIS0577_IMGHEIGHT);
+          g_autoptr(FpImage) resized_image = NULL;
+          img->width = EGIS0577_PADDED_IMGWIDTH;
+          img->height = EGIS0577_IMGHEIGHT;
+          img->flags = FPI_IMAGE_COLORS_INVERTED;
+
+          for (guint src_y = 0; src_y < EGIS0577_SENSOR_STRIDE_Y; src_y++)
+            {
+              for (guint src_x = 0; src_x < EGIS0577_SENSOR_ACTIVE_WIDTH; src_x++)
+                {
+                  guint8 val = transfer->buffer[src_y * EGIS0577_SENSOR_STRIDE_X + src_x];
+                  guint8 bg = self->background ? self->background[src_y * EGIS0577_SENSOR_STRIDE_X + src_x] : 0;
+                  if (val > bg + 2)
+                    val -= bg;
+                  else
+                    val = 0;
+
+                  guint dest_x = src_x;
+                  guint dest_y = src_y;
+
+                  img->data[dest_y * EGIS0577_PADDED_IMGWIDTH + dest_x] = val;
+                }
+            }
+
+          resized_image = fpi_image_resize (img, EGIS0577_RESIZE, EGIS0577_RESIZE);
+          quality_ok = stage2_snapshot_quality_ok (self,
+                                                   resized_image,
+                                                   NULL, NULL, NULL, NULL, NULL);
+        }
+
+        if (quality_ok)
+          {
+            fp_dbg ("Fast exit: early frame passed Stage-2 quality gate");
+            g_clear_pointer (&self->best_frame, g_free);
+            self->best_frame = g_memdup2 (transfer->buffer, transfer->actual_length);
+            self->best_sat = sat;
+            self->best_coverage = coverage;
+            finalize_turn (self, transfer->ssm, dev);
+            return;
+          }
 
         if (!self->best_frame || sat < self->best_sat)
           {
@@ -1112,24 +1161,33 @@ process_imgs (FpiSsm *ssm, FpDevice *dev)
           guint stretch_p5 = 0;
           guint stretch_p99 = 0;
           gboolean quality_ok;
-          guint row;
+
 
           img = fp_image_new (EGIS0577_PADDED_IMGWIDTH, EGIS0577_IMGHEIGHT);
           img->width = EGIS0577_PADDED_IMGWIDTH;
           img->height = EGIS0577_IMGHEIGHT;
           img->flags = FPI_IMAGE_COLORS_INVERTED;
 
-          for (row = 0; row < EGIS0577_IMGHEIGHT; row++)
+          for (guint src_y = 0; src_y < EGIS0577_SENSOR_STRIDE_Y; src_y++)
             {
-              for (guint col = 0; col < EGIS0577_IMGWIDTH; col++)
+              /* Crop to the active region: only src_x 0..ACTIVE_WIDTH-1 carry
+               * sensor pixels; columns ACTIVE_WIDTH..STRIDE_X-1 are firmware
+               * zero padding and must not reach the matcher. The raw buffer is
+               * still read at the full STRIDE_X (103) row stride. */
+              for (guint src_x = 0; src_x < EGIS0577_SENSOR_ACTIVE_WIDTH; src_x++)
                 {
-                  guint8 val = self->capture_frame[row * EGIS0577_IMGWIDTH + col];
-                  guint8 bg = self->background ? self->background[row * EGIS0577_IMGWIDTH + col] : 0;
+                  guint8 val = self->capture_frame[src_y * EGIS0577_SENSOR_STRIDE_X + src_x];
+                  guint8 bg = self->background ? self->background[src_y * EGIS0577_SENSOR_STRIDE_X + src_x] : 0;
                   if (val > bg + 2)
                     val -= bg;
                   else
                     val = 0;
-                  img->data[row * EGIS0577_PADDED_IMGWIDTH + col] = val;
+
+                  /* Native landscape orientation (70x52), no rotation. */
+                  guint dest_x = src_x;
+                  guint dest_y = src_y;
+
+                  img->data[dest_y * EGIS0577_PADDED_IMGWIDTH + dest_x] = val;
                 }
             }
 
@@ -1142,7 +1200,7 @@ process_imgs (FpiSsm *ssm, FpDevice *dev)
                                                    &stretch_p5,
                                                    &stretch_p99);
 
-          fp_dbg ("Stage-2 snapshot gate: stretch_p5=%u/%u stretch_p99=%u grain=%u.%03u%%/%u.%03u%% ridge_pixels=%u/%u minutiae=%u/%u..%u => %s",
+          fp_warn ("Stage-2 snapshot gate: stretch_p5=%u/%u stretch_p99=%u grain=%u.%03u%%/%u.%03u%% ridge_pixels=%u/%u minutiae=%u/%u..%u => %s",
                   stretch_p5,
                   self->stage2_min_stretch_p5,
                   stretch_p99,
@@ -1174,8 +1232,6 @@ process_imgs (FpiSsm *ssm, FpDevice *dev)
 
               if (noise_like)
                 self->noise_reject_streak++;
-              else
-                self->noise_reject_streak = 0;
 
               if (noise_like &&
                   self->noise_reject_streak >= noise_recovery_streak_threshold (dev) &&

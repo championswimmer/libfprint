@@ -121,9 +121,22 @@ static const Packet EGIS0577_POST_INIT_PACKETS[] = {
 
 
 
-#define EGIS0577_IMGWIDTH 103
-#define EGIS0577_IMGHEIGHT 52
-#define EGIS0577_IMGSIZE (EGIS0577_IMGWIDTH * EGIS0577_IMGHEIGHT)
+/*
+ * The USB frame is 103x52, row-major with a 103-byte stride (confirmed by
+ * SAD-comb stride recovery on raw frames and by the Windows engine DLL, which
+ * stores width=103/height=52 for the 0577 branch). The rightmost 33 columns
+ * (src_x 70..102) are returned as hard zeros by the firmware on every frame -
+ * they are zero padding, not sensor pixels - so the responsive fingerprint
+ * area is only 70x52. STRIDE_X/IMGSIZE stay at the raw transfer geometry; the
+ * output image crops to ACTIVE_WIDTH so the dead band is never matched.
+ */
+#define EGIS0577_SENSOR_STRIDE_X 103          /* raw row stride (active + zero pad) */
+#define EGIS0577_SENSOR_STRIDE_Y 52           /* raw rows */
+#define EGIS0577_SENSOR_ACTIVE_WIDTH 70       /* responsive columns: src_x 0..69 */
+
+#define EGIS0577_IMGWIDTH EGIS0577_SENSOR_ACTIVE_WIDTH
+#define EGIS0577_IMGHEIGHT EGIS0577_SENSOR_STRIDE_Y
+#define EGIS0577_IMGSIZE (EGIS0577_SENSOR_STRIDE_X * EGIS0577_SENSOR_STRIDE_Y)
 /*
  * pixman's A8 helpers used by fpi_image_resize() require rowstride alignment
  * to 32 bits, so the snapshot image must be padded before resizing.
@@ -150,9 +163,9 @@ static const Packet EGIS0577_POST_INIT_PACKETS[] = {
 #define EGIS0577_ENHANCE_STRETCH_OUT_HI 245
 #define EGIS0577_STAGE2_MIN_STRETCH_P5 100
 #define EGIS0577_STAGE2_GRAIN_DIFF_THRESHOLD 25
-#define EGIS0577_STAGE2_GRAIN_PCT_X1000 8000
-#define EGIS0577_STAGE2_MIN_MINUTIAE 3
-#define EGIS0577_STAGE2_MAX_MINUTIAE 12
+#define EGIS0577_STAGE2_GRAIN_PCT_X1000 6000
+#define EGIS0577_STAGE2_MIN_MINUTIAE 4
+#define EGIS0577_STAGE2_MAX_MINUTIAE 16
 #define EGIS0577_STAGE2_RIDGE_PIXEL_THRESHOLD 180
 #define EGIS0577_STAGE2_MIN_RIDGE_PIXELS 600
 
@@ -160,7 +173,7 @@ static const Packet EGIS0577_POST_INIT_PACKETS[] = {
  * state may be contaminated; after a small action-aware streak, clear the warm
  * baseline and force a fresh init/baseline cycle. Verify/identify are bounded
  * more tightly so login never spends too long recovering. */
-#define EGIS0577_NOISE_RECOVERY_STREAK_ENROLL_CAPTURE 3
+#define EGIS0577_NOISE_RECOVERY_STREAK_ENROLL_CAPTURE 2
 #define EGIS0577_NOISE_RECOVERY_STREAK_VERIFY_IDENTIFY 2
 #define EGIS0577_NOISE_RECOVERY_MAX_ENROLL_CAPTURE 2
 #define EGIS0577_NOISE_RECOVERY_MAX_VERIFY_IDENTIFY 1
