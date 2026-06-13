@@ -3,6 +3,7 @@ examples = [
     'enroll',
     'eh577-enroll-helper',
     'eh577-identify-helper',
+    'eh577-verify-helper',
     'eh577-capture-helper',
     'identify',
     'img-capture',
@@ -41,6 +42,20 @@ executable('eh577-pgm-match',
     'eh577-pgm-match.c',
     dependencies: [ libfprint_dep, glib_dep ],
     include_directories: include_directories('../libfprint'),
+    link_with: libfprint_private,
+)
+
+executable('eh577-pgm-match-relaxed',
+    [ 'eh577-pgm-match-relaxed.c', 'eh577-relaxed-bozorth.c' ],
+    dependencies: [ libfprint_dep, glib_dep ],
+    include_directories: [
+        include_directories('../libfprint'),
+        include_directories('../libfprint/nbis/include'),
+    ],
+    c_args: [
+        '-Wno-error=redundant-decls',
+        '-Wno-array-parameter',
+    ],
     link_with: libfprint_private,
 )
 
