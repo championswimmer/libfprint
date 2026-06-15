@@ -7,7 +7,6 @@
  * Usage: eh577-pgm-match <a.pgm> [b.pgm ...] [--threshold N]
  *
  * The default threshold printed in the summary is 40 (libfprint default).
- * The driver uses EGIS0577_BZ3_THRESHOLD (9); both are shown for context.
  *
  * Copyright (C) 2026 workspace contributors
  * LGPL-2.1-or-later
