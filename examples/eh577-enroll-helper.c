@@ -258,6 +258,8 @@ main (int argc, char **argv)
 
   entries[1].arg_data = &device_index;
 
+  setbuf (stdout, NULL);
+
   context = g_option_context_new ("--finger-index N");
   g_option_context_add_main_entries (context, entries, NULL);
 

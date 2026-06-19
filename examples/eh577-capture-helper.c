@@ -238,6 +238,25 @@ sigint_cb (void *user_data)
   return G_SOURCE_CONTINUE;
 }
 
+static void
+egis0577_log_handler (const gchar *log_domain, GLogLevelFlags log_level, const gchar *message, gpointer user_data)
+{
+  if (g_strstr_len (message, -1, "Lift detected; re-arming"))
+    capture_message ("EH577_CAPTURE state arming\n");
+  else if (g_strstr_len (message, -1, "Finger settling"))
+    capture_message ("EH577_CAPTURE state settling\n");
+  else if (g_strstr_len (message, -1, "finger detected"))
+    capture_message ("EH577_CAPTURE state evaluating\n");
+  else if (g_strstr_len (message, -1, "Frame accepted"))
+    capture_message ("EH577_CAPTURE state success\n");
+  else if (g_strstr_len (message, -1, "Turn timed out"))
+    capture_message ("EH577_CAPTURE state timeout\n");
+  else if (g_strstr_len (message, -1, "waiting for lift"))
+    capture_message ("EH577_CAPTURE state wait-lift\n");
+  
+  g_log_default_handler (log_domain, log_level, message, user_data);
+}
+
 int
 main (int argc, char **argv)
 {
@@ -249,6 +268,10 @@ main (int argc, char **argv)
   /* args: <output-dir> [count] */
   const char *dir = (argc >= 2) ? argv[1] : ".";
   gint total = (argc >= 3) ? atoi (argv[2]) : 12;
+
+  g_log_set_handler ("libfprint-egis0577",
+                     G_LOG_LEVEL_MASK | G_LOG_FLAG_FATAL | G_LOG_FLAG_RECURSION,
+                     egis0577_log_handler, NULL);
 
   if (total < 1)
     total = 1;
