@@ -5,6 +5,7 @@ examples = [
     'eh577-identify-helper',
     'eh577-verify-helper',
     'eh577-capture-helper',
+    'eh577-timing-probe',
     'identify',
     'img-capture',
     'manage-prints',

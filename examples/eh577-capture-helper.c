@@ -15,11 +15,32 @@
 #define FP_COMPONENT "example-eh577-capture-helper"
 
 #include <stdio.h>
+#include <stdarg.h>
+#include <unistd.h>
+#include <fcntl.h>
 #include <libfprint/fprint.h>
 #include <glib-unix.h>
 
 #include "storage.h"
 #include "utilities.h"
+
+/* If fd 3 is open (the wrapper script wires it to the terminal), write
+ * user-facing prompts there so stdout/stderr can be redirected to a log
+ * file without losing terminal interaction.  Falls back to stdout if fd 3
+ * is not available so the helper still works when run directly. */
+G_GNUC_PRINTF (1, 2)
+static void
+capture_message (const char *fmt, ...)
+{
+  va_list args;
+
+  va_start (args, fmt);
+  if (fcntl (3, F_GETFD) != -1)
+    vdprintf (3, fmt, args);
+  else
+    g_vprintf (fmt, args);
+  va_end (args);
+}
 
 typedef struct CaptureData
 {
@@ -64,7 +85,7 @@ on_finger_status_changed (FpDevice *dev, GParamSpec *pspec, gpointer user_data)
   s = (status & FP_FINGER_STATUS_PRESENT) ? "present" :
       (status & FP_FINGER_STATUS_NEEDED) ? "needed" : "none";
 
-  g_print ("EH577_CAPTURE finger-status status=%s\n", s);
+  capture_message ("EH577_CAPTURE finger-status status=%s\n", s);
 }
 
 static void
@@ -124,7 +145,7 @@ schedule_retry_after_lift (FpDevice *dev, CaptureData *cd)
   rr->dev = g_object_ref (dev);
   rr->cd = cd;
 
-  g_print ("EH577_CAPTURE lift your finger before retry\n");
+  capture_message ("EH577_CAPTURE lift your finger before retry\n");
   g_timeout_add_full (G_PRIORITY_DEFAULT,
                       1500,
                       retry_after_lift_cb,
@@ -147,12 +168,12 @@ dev_capture_cb (FpDevice *dev, GAsyncResult *res, void *user_data)
       /* Retryable scan errors: re-issue the same touch instead of advancing. */
       if (error && error->domain == FP_DEVICE_RETRY)
         {
-          g_print ("EH577_CAPTURE retry message=%s\n", error->message);
+          capture_message ("EH577_CAPTURE retry message=%s\n", error->message);
           schedule_retry_after_lift (dev, cd);
           return;
         }
 
-      g_print ("EH577_CAPTURE error message=%s\n", error ? error->message : "unknown");
+      capture_message ("EH577_CAPTURE error message=%s\n", error ? error->message : "unknown");
       cd->ret_value = EXIT_FAILURE;
       capture_quit (dev, cd);
       return;
@@ -163,19 +184,19 @@ dev_capture_cb (FpDevice *dev, GAsyncResult *res, void *user_data)
     g_autofree gchar *base = g_strdup_printf ("capture-%02d.pgm", cd->done);
     g_autofree gchar *path = g_build_filename (cd->dir, base, NULL);
     if (save_image_to_pgm (image, path))
-      g_print ("EH577_CAPTURE saved %d/%d path=%s\n", cd->done, cd->total, path);
+      capture_message ("EH577_CAPTURE saved %d/%d path=%s\n", cd->done, cd->total, path);
     else
-      g_print ("EH577_CAPTURE save-failed %d/%d path=%s\n", cd->done, cd->total, path);
+      capture_message ("EH577_CAPTURE save-failed %d/%d path=%s\n", cd->done, cd->total, path);
   }
 
   if (cd->done < cd->total)
     {
-      g_print ("EH577_CAPTURE lift your finger\n");
+      capture_message ("EH577_CAPTURE lift your finger\n");
       start_next_capture (dev, cd);
     }
   else
     {
-      g_print ("EH577_CAPTURE complete count=%d\n", cd->done);
+      capture_message ("EH577_CAPTURE complete count=%d\n", cd->done);
       cd->ret_value = EXIT_SUCCESS;
       capture_quit (dev, cd);
     }
@@ -184,7 +205,7 @@ dev_capture_cb (FpDevice *dev, GAsyncResult *res, void *user_data)
 static void
 start_next_capture (FpDevice *dev, CaptureData *cd)
 {
-  g_print ("EH577_CAPTURE touch %d/%d — press and hold\n", cd->done + 1, cd->total);
+  capture_message ("EH577_CAPTURE touch %d/%d — press and hold\n", cd->done + 1, cd->total);
   fp_device_capture (dev, TRUE, cd->cancellable,
                      (GAsyncReadyCallback) dev_capture_cb, cd);
 }
@@ -198,13 +219,13 @@ on_device_opened (FpDevice *dev, GAsyncResult *res, void *user_data)
 
   if (!fp_device_open_finish (dev, res, &error))
     {
-      g_print ("EH577_CAPTURE device-open-failed message=%s\n", error->message);
+      capture_message ("EH577_CAPTURE device-open-failed message=%s\n", error->message);
       cd->ret_value = EXIT_FAILURE;
       capture_quit (dev, cd);
       return;
     }
 
-  g_print ("EH577_CAPTURE device-opened total=%d\n", cd->total);
+  capture_message ("EH577_CAPTURE device-opened total=%d\n", cd->total);
   start_next_capture (dev, cd);
 }
 
